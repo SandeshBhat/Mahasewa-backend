@@ -3,7 +3,7 @@ Authentication endpoints for MahaSeWA API
 """
 from fastapi import APIRouter, Depends, HTTPException, status, Response, Request
 from sqlalchemy.orm import Session
-from datetime import timedelta, datetime
+from datetime import timedelta, datetime, timezone
 
 from app.db.session import get_db
 from app.models.user import User
@@ -125,7 +125,7 @@ async def login(
     
     # Set httpOnly cookie for secure token storage
     # Cookie expires in 7 days (same as token expiration)
-    expires = datetime.utcnow() + timedelta(days=7)
+    expires = datetime.now(timezone.utc) + timedelta(days=7)
     
     response.set_cookie(
         key="access_token",
