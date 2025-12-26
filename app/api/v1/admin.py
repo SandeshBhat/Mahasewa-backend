@@ -256,7 +256,7 @@ class PendingTaskResponse(BaseModel):
     count: int
 
 
-@router.get("/dashboard/stats", response_model=DashboardStatsResponse)
+@router.get("/dashboard/stats/", response_model=DashboardStatsResponse)
 async def get_dashboard_stats(
     current_user: User = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
@@ -546,7 +546,7 @@ class UserUpdate(BaseModel):
     password: Optional[str] = None
 
 
-@router.get("/users")
+@router.get("/users/")
 async def list_users(
     skip: int = 0,
     limit: int = 100,

@@ -83,33 +83,33 @@ app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 # ============================================================================
 
 # CORS Middleware - Allow frontend to connect
-# CRITICAL: When allow_credentials=True, cannot use wildcard "*" for origins
-# Must specify exact origins from settings
-# If CORS_ORIGINS is empty or not set, default to common origins
+# CRITICAL: When allow_credentials=True, must use allow_origin_regex OR specific origins
+# FastAPI CORS middleware with credentials requires either:
+# 1. Specific origins in allow_origins list, OR
+# 2. allow_origin_regex pattern (but this might not work with credentials in some versions)
+# Solution: List all known Vercel URLs explicitly
 cors_origins = settings.CORS_ORIGINS if settings.CORS_ORIGINS else [
+    # Primary domains
     "https://mahasewa.vercel.app",
     "https://mahasewa-frontend.vercel.app",
-    "https://mahasewa-frontend-lo2sqngn8-hyperneural.vercel.app",  # Latest deployment
-    "https://mahasewa-frontend-eiyqt275t-hyperneural.vercel.app",
-    "https://mahasewa-frontend-qorb18fjy-hyperneural.vercel.app",
     "https://mahasewa.org",
     "https://www.mahasewa.org",
+    # All Vercel deployment URLs (add new ones as they're created)
+    "https://mahasewa-frontend-m0fq7lec7-hyperneural.vercel.app",  # Latest - Dec 26, 2025
+    "https://mahasewa-frontend-lo2sqngn8-hyperneural.vercel.app",
+    "https://mahasewa-frontend-eiyqt275t-hyperneural.vercel.app",
+    "https://mahasewa-frontend-qorb18fjy-hyperneural.vercel.app",
+    # Local development
     "http://localhost:3000",
     "http://localhost:8080",
 ]
 
-# Add regex pattern for all Vercel deployment URLs
-import re
-allow_origin_regex = r"https://mahasewa-frontend-[a-z0-9]+-hyperneural\.vercel\.app"
+logger.info(f"CORS configured for origins: {cors_origins}")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=cors_origins,  # Use specific origins (required for credentials)
-    allow_origin_regex=allow_origin_regex,  # Allow all Vercel deployment URLs
+    allow_origins=cors_origins,  # Specific origins (required for credentials)
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["*"],
-)
     allow_headers=["*"],
     expose_headers=["*"],
 )
