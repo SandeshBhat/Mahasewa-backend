@@ -73,7 +73,9 @@ app = FastAPI(
 
 # Add rate limiter to app state
 app.state.limiter = limiter
-app.add_exception_handler(limiter.exception_handler, rate_limit_exceeded_handler)
+# Add custom rate limit exception handler
+from slowapi.errors import RateLimitExceeded
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 
 # ============================================================================
@@ -86,16 +88,28 @@ app.add_exception_handler(limiter.exception_handler, rate_limit_exceeded_handler
 # If CORS_ORIGINS is empty or not set, default to common origins
 cors_origins = settings.CORS_ORIGINS if settings.CORS_ORIGINS else [
     "https://mahasewa.vercel.app",
+    "https://mahasewa-frontend.vercel.app",
+    "https://mahasewa-frontend-lo2sqngn8-hyperneural.vercel.app",  # Latest deployment
+    "https://mahasewa-frontend-eiyqt275t-hyperneural.vercel.app",
+    "https://mahasewa-frontend-qorb18fjy-hyperneural.vercel.app",
     "https://mahasewa.org",
     "https://www.mahasewa.org",
     "http://localhost:3000",
     "http://localhost:8080",
 ]
+
+# Add regex pattern for all Vercel deployment URLs
+import re
+allow_origin_regex = r"https://mahasewa-frontend-[a-z0-9]+-hyperneural\.vercel\.app"
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,  # Use specific origins (required for credentials)
+    allow_origin_regex=allow_origin_regex,  # Allow all Vercel deployment URLs
     allow_credentials=True,
     allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+)
     allow_headers=["*"],
     expose_headers=["*"],
 )
