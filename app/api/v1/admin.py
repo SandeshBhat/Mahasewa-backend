@@ -30,7 +30,7 @@ def get_current_admin_user(
             detail="Authentication required"
         )
     
-    admin_roles = ["admin", "super_admin", "mahasewa_admin"]
+    admin_roles = ["super_admin", "mahasewa_admin", "mahasewa_staff"]
     if current_user.role not in admin_roles:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -72,11 +72,11 @@ async def verify_society(
     
     # Send verification email
     try:
-        from app.services.email_service import EmailService
+        from app.services.email_service import email_service
         if society.admin_user_id:
             admin_user = db.query(User).filter(User.id == society.admin_user_id).first()
             if admin_user:
-                EmailService.send_society_verification_email(
+                email_service.send_society_verification_email(
                     user=admin_user,
                     society_name=society.name
                 )
@@ -125,7 +125,20 @@ async def reject_society(
     
     db.commit()
     
-    # TODO: Send rejection email
+    # Send rejection email
+    try:
+        from app.services.email_service import email_service
+        if society.admin_user_id:
+            admin_user = db.query(User).filter(User.id == society.admin_user_id).first()
+            if admin_user:
+                email_service.send_society_rejection_email(
+                    user=admin_user,
+                    society_name=society.name,
+                    reason=rejection_reason or "Please contact support for more information"
+                )
+    except Exception as e:
+        # Log error but don't fail the request
+        print(f"Error sending rejection email: {e}")
     
     return {
         "success": True,
@@ -162,11 +175,11 @@ async def approve_vendor(
     
     # Send approval email with subscription info
     try:
-        from app.services.email_service import EmailService
+        from app.services.email_service import email_service
         if provider.user_id:
             provider_user = db.query(User).filter(User.id == provider.user_id).first()
             if provider_user:
-                EmailService.send_vendor_approval_email(
+                email_service.send_vendor_approval_email(
                     user=provider_user,
                     business_name=provider.business_name
                 )
@@ -214,7 +227,20 @@ async def reject_vendor(
     
     db.commit()
     
-    # TODO: Send rejection email
+    # Send rejection email
+    try:
+        from app.services.email_service import email_service
+        if provider.user_id:
+            user = db.query(User).filter(User.id == provider.user_id).first()
+            if user:
+                email_service.send_vendor_rejection_email(
+                    user=user,
+                    business_name=provider.business_name,
+                    reason=rejection_reason or "Please contact support for more information"
+                )
+    except Exception as e:
+        # Log error but don't fail the request
+        print(f"Error sending rejection email: {e}")
     
     return {
         "success": True,

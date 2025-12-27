@@ -17,7 +17,7 @@ from datetime import date
 router = APIRouter()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-from app.services.email_service import EmailService
+# Email service imported where needed
 
 # Import auth dependency
 try:
@@ -79,8 +79,8 @@ async def register_vendor(
     1. Create user account with SERVICE_PROVIDER role
     2. Create service_provider record (status: pending_approval)
     3. Create service records for each category
-    4. Notify admin for approval (TODO)
-    5. Send confirmation email (TODO)
+    4. Send registration confirmation email
+    5. Admin will review and approve/reject
     
     Note: Subscription is handled separately after admin approval
     """
@@ -127,7 +127,36 @@ async def register_vendor(
         elif any(cat in ["Accounting Services", "CA"] for cat in registration.services.categories):
             provider_type = ProviderType.FINANCIAL
         
-        # 3. Create service provider
+        # 3. Geocode address to get coordinates (background task, don't block registration)
+        latitude = None
+        longitude = None
+        if registration.business.address:
+            try:
+                from app.services.geocoding_service import geocoding_service
+                # Note: Geocoding is async but we'll do it synchronously here
+                # In production, consider using background tasks
+                import asyncio
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                
+                coordinates = loop.run_until_complete(
+                    geocoding_service.geocode_address(
+                        address=registration.business.address,
+                        city=registration.business.city,
+                        state=registration.business.state,
+                        pincode=registration.business.pincode
+                    )
+                )
+                if coordinates:
+                    latitude, longitude = coordinates
+            except Exception as e:
+                # Log but don't fail registration if geocoding fails
+                print(f"Geocoding failed for provider registration: {e}")
+        
+        # 4. Create service provider
         new_provider = ServiceProvider(
             user_id=new_user.id,
             business_name=registration.business.name,
@@ -140,6 +169,8 @@ async def register_vendor(
             city=registration.business.city,
             state=registration.business.state,
             pincode=registration.business.pincode,
+            latitude=latitude,
+            longitude=longitude,
             verification_status=VerificationStatus.PENDING,
             is_active=False,  # Inactive until admin approves
             max_service_radius_km=10  # Default radius
@@ -147,7 +178,7 @@ async def register_vendor(
         db.add(new_provider)
         db.flush()  # Get provider ID
         
-        # 4. Create services
+        # 5. Create services
         for category in registration.services.categories:
             service = Service(
                 provider_id=new_provider.id,
@@ -160,6 +191,17 @@ async def register_vendor(
         
         db.commit()
         db.refresh(new_provider)
+        
+        # Send registration confirmation email
+        try:
+            from app.services.email_service import email_service
+            email_service.send_registration_confirmation_email(
+                user=new_user,
+                role="service_provider"
+            )
+        except Exception as e:
+            # Log error but don't fail the request
+            print(f"Error sending registration email: {e}")
         
         return VendorRegistrationResponse(
             success=True,

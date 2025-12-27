@@ -29,6 +29,9 @@ class ServiceBooking(Base, TimestampMixin):
     client_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     society_id = Column(Integer, ForeignKey("societies.id"), nullable=True)
     
+    # Branch tracking
+    branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True)
+    
     # Provider & Service
     provider_id = Column(Integer, ForeignKey("service_providers.id"), nullable=False)
     service_id = Column(Integer, ForeignKey("services.id"), nullable=True)
@@ -66,6 +69,7 @@ class ServiceBooking(Base, TimestampMixin):
     # Relationships
     client = relationship("User", foreign_keys=[client_user_id], backref="service_bookings")
     society = relationship("Society", backref="service_bookings")
+    branch = relationship("Branch", backref="service_bookings")
     provider = relationship("ServiceProvider", backref="service_bookings")
     service = relationship("Service", backref="bookings")
     

@@ -102,7 +102,12 @@ def require_any_role(*allowed_roles: str):
     Usage: Depends(require_any_role("admin", "society_admin"))
     """
     async def role_checker(current_user: User = Depends(get_current_user)) -> User:
-        if current_user.role not in allowed_roles and current_user.role != "admin":
+        # Super admin and mahasewa_admin have access to everything
+        admin_roles = ["super_admin", "mahasewa_admin"]
+        if current_user.role in admin_roles:
+            return current_user
+        
+        if current_user.role not in allowed_roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Access denied. Required roles: {', '.join(allowed_roles)}"
@@ -110,4 +115,131 @@ def require_any_role(*allowed_roles: str):
         return current_user
     
     return role_checker
+
+
+# ============ ROLE-SPECIFIC DEPENDENCIES ============
+
+async def get_current_member_user(
+    current_user: Optional[User] = Depends(get_current_user)
+) -> User:
+    """Dependency to get current member user"""
+    if not current_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required"
+        )
+    
+    # Admin roles have access to everything
+    admin_roles = ["super_admin", "mahasewa_admin", "mahasewa_staff"]
+    if current_user.role in admin_roles:
+        return current_user
+    
+    # Check if user is a member
+    if current_user.role != "mahasewa_member":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. Member role required."
+        )
+    
+    return current_user
+
+
+async def get_current_society_admin_user(
+    current_user: Optional[User] = Depends(get_current_user)
+) -> User:
+    """Dependency to get current society admin user"""
+    if not current_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required"
+        )
+    
+    # Admin roles have access to everything
+    admin_roles = ["super_admin", "mahasewa_admin", "mahasewa_staff"]
+    if current_user.role in admin_roles:
+        return current_user
+    
+    # Check if user is a society admin
+    if current_user.role != "society_admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. Society admin role required."
+        )
+    
+    return current_user
+
+
+async def get_current_provider_user(
+    current_user: Optional[User] = Depends(get_current_user)
+) -> User:
+    """Dependency to get current service provider user"""
+    if not current_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required"
+        )
+    
+    # Admin roles have access to everything
+    admin_roles = ["super_admin", "mahasewa_admin", "mahasewa_staff"]
+    if current_user.role in admin_roles:
+        return current_user
+    
+    # Check if user is a service provider
+    if current_user.role != "service_provider":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. Service provider role required."
+        )
+    
+    return current_user
+
+
+async def get_current_branch_manager_user(
+    current_user: Optional[User] = Depends(get_current_user)
+) -> User:
+    """Dependency to get current branch manager user"""
+    if not current_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required"
+        )
+    
+    # Super admin and mahasewa_admin have access to everything
+    super_admin_roles = ["super_admin", "mahasewa_admin"]
+    if current_user.role in super_admin_roles:
+        return current_user
+    
+    # Check if user is a branch manager
+    if current_user.role != "branch_manager":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. Branch manager role required."
+        )
+    
+    return current_user
+
+
+async def get_current_staff_user(
+    current_user: Optional[User] = Depends(get_current_user)
+) -> User:
+    """Dependency to get current staff user"""
+    if not current_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required"
+        )
+    
+    # Super admin and mahasewa_admin have access to everything
+    super_admin_roles = ["super_admin", "mahasewa_admin"]
+    if current_user.role in super_admin_roles:
+        return current_user
+    
+    # Check if user is staff
+    if current_user.role != "mahasewa_staff":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. Staff role required."
+        )
+    
+    return current_user
 

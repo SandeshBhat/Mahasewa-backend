@@ -245,8 +245,8 @@ async def request_password_reset(
         )
         # Send password reset email
         try:
-            from app.services.email_service import EmailService
-            EmailService.send_password_reset_email(user, reset_token)
+            from app.services.email_service import email_service
+            email_service.send_password_reset_email(user, reset_token)
         except Exception as e:
             # Log error but don't fail the request
             print(f"Error sending password reset email: {e}")

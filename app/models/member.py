@@ -67,6 +67,7 @@ class Member(Base, TimestampMixin):
     society = relationship("Society", back_populates="members")
     branch = relationship("Branch", back_populates="members")
     cases = relationship("Case", back_populates="member")
+    documents = relationship("Document", back_populates="member")
     
     def __repr__(self):
         return f"<Member {self.membership_number} - {self.status}>"

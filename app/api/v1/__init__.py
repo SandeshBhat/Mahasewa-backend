@@ -16,7 +16,10 @@ from . import (
     analytics,
     publication_ads,
     uploads,
-    invoices
+    invoices,
+    payments,
+    geocoding,
+    files
 )
 
 __all__ = [
@@ -34,5 +37,8 @@ __all__ = [
     "analytics",
     "publication_ads",
     "uploads",
-    "invoices"
+    "invoices",
+    "payments",
+    "geocoding",
+    "files"
 ]

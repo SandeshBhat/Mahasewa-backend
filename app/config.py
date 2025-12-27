@@ -74,11 +74,17 @@ class Settings(BaseSettings):
     REDIS_MAX_CONNECTIONS: int = 10
     
     # ========================================================================
-    # EMAIL
+    # EMAIL (Brevo - formerly Sendinblue)
     # ========================================================================
-    SENDGRID_API_KEY: str = ""
+    BREVO_API_KEY: str = ""
     EMAIL_FROM: str = "noreply@mahasewa.org"
     EMAIL_FROM_NAME: str = "MahaSeWA"
+    EMAIL_REPLY_TO: str = "info@mahasewa.org"
+    
+    # ========================================================================
+    # GOOGLE MAPS (Optional - for geocoding)
+    # ========================================================================
+    GOOGLE_MAPS_API_KEY: str = ""
     
     # ========================================================================
     # AWS S3

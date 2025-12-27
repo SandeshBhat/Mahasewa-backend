@@ -11,10 +11,12 @@ from app.models.user import User, UserRole
 from app.models.society import Society, SocietyMember
 from app.models.member import Member, MembershipTier, MembershipStatus
 from app.models.invoice import InvoiceType
+from app.models.document import Document, DocumentType, DocumentStatus
 from app.schemas.registration import MemberRegistrationRequest, MemberRegistrationResponse
 from app.services.invoice_service import InvoiceService
-from app.services.email_service import EmailService
-from app.dependencies.auth import get_current_user
+from app.services.email_service import email_service
+from app.dependencies.auth import get_current_user, get_current_member_user
+from pydantic import BaseModel
 
 router = APIRouter()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -231,7 +233,8 @@ async def register_member(
         )
         
         # 7. Send confirmation email
-        EmailService.send_member_registration_email(
+        from app.services.email_service import email_service
+        email_service.send_member_registration_email(
             user=new_user,
             membership_number=membership_number,
             invoice=invoice,
@@ -264,15 +267,10 @@ async def register_member(
 
 @router.get("/me")
 async def get_my_member_profile(
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: User = Depends(get_current_member_user),
     db: Session = Depends(get_db)
 ):
     """Get current member's profile"""
-    if not current_user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required"
-        )
     
     # Find member by user_id with eager loading to prevent N+1 queries
     from sqlalchemy.orm import joinedload
@@ -383,12 +381,6 @@ async def get_my_member_invoices(
     
     Returns list of invoices for the logged-in member
     """
-    if not current_user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required"
-        )
-    
     # Verify member exists
     member = db.query(Member).filter(Member.user_id == current_user.id).first()
     if not member:
@@ -430,7 +422,7 @@ async def get_my_member_bookings(
     skip: int = 0,
     limit: int = 100,
     status_filter: Optional[str] = None,
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: User = Depends(get_current_member_user),
     db: Session = Depends(get_db)
 ):
     """
@@ -438,11 +430,6 @@ async def get_my_member_bookings(
     
     Returns list of bookings made by the logged-in member
     """
-    if not current_user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required"
-        )
     
     # Verify member exists
     member = db.query(Member).filter(Member.user_id == current_user.id).first()
@@ -497,11 +484,38 @@ async def get_my_member_bookings(
     }
 
 
+# ============ DOCUMENT MANAGEMENT ============
+
+class DocumentCreate(BaseModel):
+    """Request schema for creating a document"""
+    document_type: str
+    title: str
+    description: Optional[str] = None
+    file_name: str
+    file_url: str
+    file_size: Optional[int] = None
+    mime_type: Optional[str] = None
+    expiry_date: Optional[str] = None
+    tags: Optional[str] = None
+    is_public: bool = False
+
+
+class DocumentUpdate(BaseModel):
+    """Request schema for updating a document"""
+    title: Optional[str] = None
+    description: Optional[str] = None
+    expiry_date: Optional[str] = None
+    tags: Optional[str] = None
+    is_public: Optional[bool] = None
+
+
 @router.get("/me/documents")
 async def get_my_member_documents(
     skip: int = 0,
     limit: int = 100,
-    current_user: Optional[User] = Depends(get_current_user),
+    document_type: Optional[str] = None,
+    status: Optional[str] = None,
+    current_user: User = Depends(get_current_member_user),
     db: Session = Depends(get_db)
 ):
     """
@@ -510,11 +524,6 @@ async def get_my_member_documents(
     Returns list of documents uploaded by or issued to the member
     (e.g., membership certificates, receipts, etc.)
     """
-    if not current_user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required"
-        )
     
     # Verify member exists
     member = db.query(Member).filter(Member.user_id == current_user.id).first()
@@ -524,14 +533,205 @@ async def get_my_member_documents(
             detail="Member profile not found"
         )
     
-    # TODO: Implement document management system
-    # For now, return placeholder structure
-    # In future, this would query a Documents table
+    # Query documents
+    query = db.query(Document).filter(Document.member_id == member.id)
+    
+    # Apply filters
+    if document_type:
+        try:
+            doc_type = DocumentType(document_type)
+            query = query.filter(Document.document_type == doc_type)
+        except ValueError:
+            pass
+    
+    if status:
+        try:
+            doc_status = DocumentStatus(status)
+            query = query.filter(Document.status == doc_status)
+        except ValueError:
+            pass
+    
+    # Get total count
+    total = query.count()
+    
+    # Apply pagination
+    documents = query.order_by(Document.created_at.desc()).offset(skip).limit(limit).all()
     
     return {
-        "documents": [],
-        "total": 0,
+        "documents": [
+            {
+                "id": doc.id,
+                "document_type": doc.document_type.value,
+                "title": doc.title,
+                "description": doc.description,
+                "file_name": doc.file_name,
+                "file_url": doc.file_url,
+                "file_size": doc.file_size,
+                "mime_type": doc.mime_type,
+                "status": doc.status.value,
+                "expiry_date": doc.expiry_date,
+                "tags": doc.tags.split(",") if doc.tags else [],
+                "is_public": doc.is_public,
+                "created_at": doc.created_at.isoformat() if doc.created_at else None,
+                "verified_by": doc.verified_by_user_id,
+                "verification_date": doc.verification_date,
+            }
+            for doc in documents
+        ],
+        "total": total,
         "skip": skip,
-        "limit": limit,
-        "message": "Document management feature coming soon"
+        "limit": limit
+    }
+
+
+@router.post("/me/documents")
+async def create_member_document(
+    document_data: DocumentCreate,
+    current_user: User = Depends(get_current_member_user),
+    db: Session = Depends(get_db)
+):
+    """Upload a new document for the current member"""
+    
+    # Verify member exists
+    member = db.query(Member).filter(Member.user_id == current_user.id).first()
+    if not member:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Member profile not found"
+        )
+    
+    # Validate document type
+    try:
+        doc_type = DocumentType(document_data.document_type)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid document type. Valid types: {[e.value for e in DocumentType]}"
+        )
+    
+    # Create document
+    new_document = Document(
+        user_id=current_user.id,
+        member_id=member.id,
+        document_type=doc_type,
+        title=document_data.title,
+        description=document_data.description,
+        file_name=document_data.file_name,
+        file_url=document_data.file_url,
+        file_size=document_data.file_size,
+        mime_type=document_data.mime_type,
+        expiry_date=document_data.expiry_date,
+        tags=document_data.tags,
+        is_public=document_data.is_public,
+        status=DocumentStatus.PENDING
+    )
+    
+    db.add(new_document)
+    db.commit()
+    db.refresh(new_document)
+    
+    return {
+        "success": True,
+        "message": "Document uploaded successfully",
+        "document": {
+            "id": new_document.id,
+            "document_type": new_document.document_type.value,
+            "title": new_document.title,
+            "file_url": new_document.file_url,
+            "status": new_document.status.value,
+            "created_at": new_document.created_at.isoformat() if new_document.created_at else None,
+        }
+    }
+
+
+@router.put("/me/documents/{document_id}")
+async def update_member_document(
+    document_id: int,
+    document_data: DocumentUpdate,
+    current_user: User = Depends(get_current_member_user),
+    db: Session = Depends(get_db)
+):
+    """Update a member's document"""
+    
+    # Verify member exists
+    member = db.query(Member).filter(Member.user_id == current_user.id).first()
+    if not member:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Member profile not found"
+        )
+    
+    # Get document
+    document = db.query(Document).filter(
+        Document.id == document_id,
+        Document.member_id == member.id
+    ).first()
+    
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found"
+        )
+    
+    # Update fields
+    if document_data.title is not None:
+        document.title = document_data.title
+    if document_data.description is not None:
+        document.description = document_data.description
+    if document_data.expiry_date is not None:
+        document.expiry_date = document_data.expiry_date
+    if document_data.tags is not None:
+        document.tags = document_data.tags
+    if document_data.is_public is not None:
+        document.is_public = document_data.is_public
+    
+    db.commit()
+    db.refresh(document)
+    
+    return {
+        "success": True,
+        "message": "Document updated successfully",
+        "document": {
+            "id": document.id,
+            "title": document.title,
+            "status": document.status.value,
+        }
+    }
+
+
+@router.delete("/me/documents/{document_id}")
+async def delete_member_document(
+    document_id: int,
+    current_user: User = Depends(get_current_member_user),
+    db: Session = Depends(get_db)
+):
+    """Delete a member's document"""
+    
+    # Verify member exists
+    member = db.query(Member).filter(Member.user_id == current_user.id).first()
+    if not member:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Member profile not found"
+        )
+    
+    # Get document
+    document = db.query(Document).filter(
+        Document.id == document_id,
+        Document.member_id == member.id
+    ).first()
+    
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found"
+        )
+    
+    # Delete document (file deletion should be handled by file storage service)
+    db.delete(document)
+    db.commit()
+    
+    return {
+        "success": True,
+        "message": "Document deleted successfully"
     }

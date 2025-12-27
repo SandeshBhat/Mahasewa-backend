@@ -10,7 +10,7 @@ from app.models.society import Society
 from app.models.provider import ServiceProvider, VerificationStatus
 from app.models.subscription import VendorSubscription, SubscriptionStatus, VendorSubscriptionPlan
 from app.models.user import User, UserRole
-from app.dependencies.auth import get_current_user
+from app.dependencies.auth import get_current_user, get_current_society_admin_user
 from datetime import date
 
 router = APIRouter()
@@ -116,18 +116,13 @@ async def list_societies(
 
 @router.get("/me")
 async def get_my_society(
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: User = Depends(get_current_society_admin_user),
     db: Session = Depends(get_db)
 ):
     """
     Get current user's society profile
     For society_admin role, returns the society they administer
     """
-    if not current_user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required"
-        )
     
     # Find society by admin_user_id (for society_admin role)
     society = db.query(Society).filter(Society.admin_user_id == current_user.id).first()
@@ -164,7 +159,7 @@ async def get_my_society(
 
 @router.get("/me/members")
 async def get_my_society_members(
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: User = Depends(get_current_society_admin_user),
     db: Session = Depends(get_db)
 ):
     """
@@ -248,18 +243,13 @@ async def get_my_society_bookings(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
     status: Optional[str] = None,
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: User = Depends(get_current_society_admin_user),
     db: Session = Depends(get_db)
 ):
     """
     Get service bookings for current user's society
     For society_admin role, returns all bookings for their society
     """
-    if not current_user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required"
-        )
     
     # Find society by admin_user_id
     society = db.query(Society).filter(Society.admin_user_id == current_user.id).first()
@@ -517,7 +507,7 @@ async def get_nearby_vendors(
 async def get_my_society_invoices(
     skip: int = 0,
     limit: int = 100,
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: User = Depends(get_current_society_admin_user),
     db: Session = Depends(get_db)
 ):
     """
@@ -525,11 +515,6 @@ async def get_my_society_invoices(
     
     Returns list of invoices for the logged-in society admin
     """
-    if not current_user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required"
-        )
     
     # Find society by admin_user_id
     society = db.query(Society).filter(Society.admin_user_id == current_user.id).first()

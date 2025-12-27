@@ -32,6 +32,9 @@ class Consultation(Base, TimestampMixin):
     # Client
     client_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     
+    # Branch tracking
+    branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True)
+    
     # Provider
     provider_id = Column(Integer, ForeignKey("service_providers.id"), nullable=False)
     
@@ -71,6 +74,7 @@ class Consultation(Base, TimestampMixin):
     
     # Relationships
     client = relationship("User", foreign_keys=[client_user_id], backref="consultations_as_client")
+    branch = relationship("Branch", backref="consultations")
     provider = relationship("ServiceProvider", backref="consultations")
     
     def __repr__(self):

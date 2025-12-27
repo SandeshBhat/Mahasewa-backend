@@ -12,6 +12,7 @@ from app.models.provider import ServiceProvider, Service
 from app.models.consultation import Consultation
 from app.models.booking import ServiceBooking
 from app.models.compliance import ComplianceRequirement, ComplianceSubmission
+from app.models.document import Document, DocumentType, DocumentStatus
 from app.models.lms import (
     Course,
     CourseModule,
@@ -52,6 +53,9 @@ __all__ = [
     "ServiceBooking",
     "ComplianceRequirement",
     "ComplianceSubmission",
+    "Document",
+    "DocumentType",
+    "DocumentStatus",
     # LMS Models
     "Course",
     "CourseModule",

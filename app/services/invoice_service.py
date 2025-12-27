@@ -4,9 +4,20 @@ from decimal import Decimal
 from typing import Optional, Dict, List
 from sqlalchemy.orm import Session
 from io import BytesIO
+import logging
 
 from app.models.invoice import Invoice, InvoiceType, InvoiceStatus
 from app.models.user import User
+
+logger = logging.getLogger(__name__)
+
+# Try to import WeasyPrint for PDF generation
+try:
+    from weasyprint import HTML, CSS
+    WEASYPRINT_AVAILABLE = True
+except ImportError:
+    WEASYPRINT_AVAILABLE = False
+    logger.warning("WeasyPrint not installed. PDF generation will use HTML fallback.")
 
 
 class InvoiceService:
@@ -103,9 +114,21 @@ class InvoiceService:
     
     @staticmethod
     def generate_pdf(invoice: Invoice) -> bytes:
-        """Generate PDF for invoice (simplified version)"""
-        # TODO: Implement actual PDF generation with reportlab or weasyprint
-        # For now, return a simple HTML-based PDF
+        """Generate PDF for invoice using WeasyPrint"""
+        
+        # Format line items safely
+        line_items_html = ""
+        if invoice.line_items:
+            for item in invoice.line_items:
+                description = item.get('description', '')
+                quantity = item.get('quantity', 1)
+                rate = float(item.get('rate', 0))
+                amount = float(item.get('amount', 0))
+                line_items_html += f"<tr><td>{description}</td><td style='text-align: center;'>{quantity}</td><td style='text-align: right;'>{rate:.2f}</td><td style='text-align: right;'>{amount:.2f}</td></tr>"
+        else:
+            # Fallback if line_items is empty
+            description = invoice.notes or "Service/Product"
+            line_items_html = f"<tr><td>{description}</td><td style='text-align: center;'>1</td><td style='text-align: right;'>{float(invoice.base_amount):.2f}</td><td style='text-align: right;'>{float(invoice.base_amount):.2f}</td></tr>"
         
         html_content = f"""
 <!DOCTYPE html>
@@ -113,72 +136,180 @@ class InvoiceService:
 <head>
     <meta charset="UTF-8">
     <style>
-        body {{ font-family: Arial, sans-serif; margin: 40px; }}
-        .header {{ text-align: center; margin-bottom: 30px; }}
-        .invoice-details {{ margin-bottom: 20px; }}
-        table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
-        th, td {{ border: 1px solid #ddd; padding: 12px; text-align: left; }}
-        th {{ background-color: #4CAF50; color: white; }}
-        .total {{ text-align: right; font-weight: bold; font-size: 1.2em; }}
-        .footer {{ margin-top: 40px; text-align: center; color: #666; }}
+        @page {{
+            size: A4;
+            margin: 2cm;
+        }}
+        body {{
+            font-family: 'Arial', 'Helvetica', sans-serif;
+            margin: 0;
+            padding: 0;
+            color: #333;
+            line-height: 1.6;
+        }}
+        .header {{
+            text-align: center;
+            margin-bottom: 40px;
+            padding-bottom: 20px;
+            border-bottom: 3px solid #f97316;
+        }}
+        .header h1 {{
+            color: #f97316;
+            margin: 0;
+            font-size: 2.5em;
+        }}
+        .header h2 {{
+            color: #666;
+            margin: 10px 0;
+            font-size: 1.2em;
+            font-weight: normal;
+        }}
+        .invoice-info {{
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 30px;
+        }}
+        .invoice-details {{
+            flex: 1;
+        }}
+        .customer-details {{
+            flex: 1;
+            text-align: right;
+        }}
+        .invoice-details p, .customer-details p {{
+            margin: 5px 0;
+        }}
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin: 30px 0;
+        }}
+        th, td {{
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+        }}
+        th {{
+            background-color: #f97316;
+            color: white;
+            font-weight: bold;
+        }}
+        tr:nth-child(even) {{
+            background-color: #f9f9f9;
+        }}
+        .totals {{
+            margin-top: 30px;
+            text-align: right;
+        }}
+        .totals p {{
+            margin: 8px 0;
+            font-size: 1.1em;
+        }}
+        .total-amount {{
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #f97316;
+            border-top: 2px solid #f97316;
+            padding-top: 10px;
+            margin-top: 10px;
+        }}
+        .footer {{
+            margin-top: 50px;
+            padding-top: 20px;
+            border-top: 1px solid #ddd;
+            text-align: center;
+            color: #666;
+            font-size: 0.9em;
+        }}
+        .status-badge {{
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-weight: bold;
+            font-size: 0.9em;
+        }}
+        .status-paid {{
+            background-color: #4CAF50;
+            color: white;
+        }}
+        .status-pending {{
+            background-color: #FF9800;
+            color: white;
+        }}
     </style>
 </head>
 <body>
     <div class="header">
         <h1>INVOICE</h1>
         <h2>MahaSeWA - Maharashtra Societies Welfare Association</h2>
-        <p>Email: info@mahasewa.org | Phone: +91-XXXXXXXXXX</p>
+        <p>Email: info@mahasewa.org | Website: www.mahasewa.org</p>
     </div>
     
-    <div class="invoice-details">
-        <p><strong>Invoice Number:</strong> {invoice.invoice_number}</p>
-        <p><strong>Invoice Date:</strong> {invoice.invoice_date.strftime('%d-%b-%Y')}</p>
-        <p><strong>Due Date:</strong> {invoice.due_date.strftime('%d-%b-%Y') if invoice.due_date else 'N/A'}</p>
-    </div>
-    
-    <div class="customer-details">
-        <h3>Bill To:</h3>
-        <p><strong>{invoice.customer_name}</strong></p>
-        <p>{invoice.customer_email}</p>
-        <p>{invoice.customer_phone or ''}</p>
-        {f'<p>{invoice.billing_address}</p>' if invoice.billing_address else ''}
-        {f'<p>GSTIN: {invoice.billing_gstin}</p>' if invoice.billing_gstin else ''}
+    <div class="invoice-info">
+        <div class="invoice-details">
+            <p><strong>Invoice Number:</strong> {invoice.invoice_number}</p>
+            <p><strong>Invoice Date:</strong> {invoice.invoice_date.strftime('%d-%b-%Y')}</p>
+            <p><strong>Due Date:</strong> {invoice.due_date.strftime('%d-%b-%Y') if invoice.due_date else 'N/A'}</p>
+            <p><strong>Status:</strong> <span class="status-badge status-{invoice.status.value}">{invoice.status.value.upper()}</span></p>
+        </div>
+        
+        <div class="customer-details">
+            <h3 style="text-align: right; margin-top: 0;">Bill To:</h3>
+            <p><strong>{invoice.customer_name}</strong></p>
+            <p>{invoice.customer_email}</p>
+            {f'<p>{invoice.customer_phone}</p>' if invoice.customer_phone else ''}
+            {f'<p>{invoice.billing_address}</p>' if invoice.billing_address else ''}
+            {f'<p><strong>GSTIN:</strong> {invoice.billing_gstin}</p>' if invoice.billing_gstin else ''}
+        </div>
     </div>
     
     <table>
         <thead>
             <tr>
                 <th>Description</th>
-                <th>Quantity</th>
-                <th>Rate (₹)</th>
-                <th>Amount (₹)</th>
+                <th style="text-align: center; width: 80px;">Quantity</th>
+                <th style="text-align: right; width: 120px;">Rate (₹)</th>
+                <th style="text-align: right; width: 120px;">Amount (₹)</th>
             </tr>
         </thead>
         <tbody>
-            {''.join([
-                f"<tr><td>{item['description']}</td><td>{item['quantity']}</td><td>{item['rate']:.2f}</td><td>{item['amount']:.2f}</td></tr>"
-                for item in invoice.line_items
-            ])}
+            {line_items_html}
         </tbody>
     </table>
     
-    <div class="total">
-        <p>Base Amount: ₹{float(invoice.base_amount):.2f}</p>
+    <div class="totals">
+        <p>Subtotal: ₹{float(invoice.base_amount):.2f}</p>
         <p>GST ({float(invoice.gst_rate)}%): ₹{float(invoice.gst_amount):.2f}</p>
-        <p style="font-size: 1.3em; color: #4CAF50;">Total Amount: ₹{float(invoice.total_amount):.2f}</p>
+        <p class="total-amount">Total Amount: ₹{float(invoice.total_amount):.2f}</p>
     </div>
     
+    {f'<div style="margin-top: 30px;"><p><strong>Payment Method:</strong> {invoice.payment_method}</p><p><strong>Payment Date:</strong> {invoice.payment_date.strftime("%d-%b-%Y") if invoice.payment_date else "N/A"}</p></div>' if invoice.payment_method else ''}
+    
+    {f'<div style="margin-top: 20px;"><p><strong>Notes:</strong> {invoice.notes}</p></div>' if invoice.notes else ''}
+    
     <div class="footer">
-        <p>Thank you for your business!</p>
-        <p>This is a computer-generated invoice.</p>
+        <p><strong>Thank you for your business!</strong></p>
+        <p>This is a computer-generated invoice. No signature required.</p>
+        <p>For queries, contact: info@mahasewa.org</p>
     </div>
 </body>
 </html>
         """
         
-        # For now, return HTML as bytes
-        # In production, use weasyprint or reportlab to convert HTML to PDF
-        return html_content.encode('utf-8')
+        # Generate PDF using WeasyPrint if available
+        if WEASYPRINT_AVAILABLE:
+            try:
+                # Create PDF from HTML
+                pdf_bytes = HTML(string=html_content).write_pdf()
+                return pdf_bytes
+            except Exception as e:
+                logger.error(f"Error generating PDF with WeasyPrint: {e}")
+                # Fallback to HTML
+                return html_content.encode('utf-8')
+        else:
+            # Fallback to HTML if WeasyPrint not available
+            logger.warning("WeasyPrint not available, returning HTML instead of PDF")
+            return html_content.encode('utf-8')
     
     @staticmethod
     def get_invoice_html(invoice: Invoice) -> str:

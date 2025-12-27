@@ -8,7 +8,8 @@ from app.db.session import get_db
 from app.models.user import User
 from app.models.invoice import Invoice, InvoiceStatus, InvoiceType
 from app.services.invoice_service import InvoiceService
-from app.dependencies.auth import get_current_user, require_role
+from app.dependencies.auth import get_current_user, get_current_admin_user
+from app.api.v1.admin import get_current_admin_user as get_admin_user
 
 router = APIRouter()
 
@@ -23,15 +24,24 @@ async def list_my_invoices(
     db: Session = Depends(get_db)
 ):
     """
-    Get current user's invoices
-    
-    Returns list of invoices for the authenticated user
+    Get invoices with role-based filtering:
+    - Regular users: See only their invoices
+    - Admins: See all invoices (use /admin/all for explicit admin endpoint)
     """
+    admin_roles = ["super_admin", "mahasewa_admin", "mahasewa_staff"]
+    is_admin = current_user.role in admin_roles
+    
+    # Admins can see all invoices, regular users see only their own
+    if is_admin:
+        query = db.query(Invoice)
+    else:
+        query = db.query(Invoice).filter(Invoice.user_id == current_user.id)
     # Convert string status to enum if provided
     status_enum = None
     if status:
         try:
             status_enum = InvoiceStatus[status.upper()]
+            query = query.filter(Invoice.status == status_enum)
         except KeyError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -43,17 +53,15 @@ async def list_my_invoices(
     if invoice_type:
         try:
             type_enum = InvoiceType[invoice_type.upper()]
+            query = query.filter(Invoice.invoice_type == type_enum)
         except KeyError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid invoice_type: {invoice_type}. Valid values: {[t.value for t in InvoiceType]}"
             )
     
-    invoices = InvoiceService.get_user_invoices(
-        db, current_user.id, status_enum, type_enum, skip, limit
-    )
-    
-    total = db.query(Invoice).filter(Invoice.user_id == current_user.id).count()
+    total = query.count()
+    invoices = query.order_by(Invoice.invoice_date.desc()).offset(skip).limit(limit).all()
     
     return {
         "invoices": [
@@ -90,16 +98,22 @@ async def get_invoice(
     Get invoice details
     
     Returns full details of a specific invoice
+    Users can only see their own invoices, admins can see any invoice
     """
-    invoice = db.query(Invoice).filter(
-        Invoice.id == invoice_id,
-        Invoice.user_id == current_user.id
-    ).first()
+    invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
     
     if not invoice:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Invoice not found"
+        )
+    
+    # Verify ownership (unless admin)
+    admin_roles = ["super_admin", "mahasewa_admin", "mahasewa_staff"]
+    if current_user.role not in admin_roles and invoice.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. You can only view your own invoices."
         )
     
     return {
@@ -141,16 +155,22 @@ async def get_invoice_html(
     Get invoice HTML representation
     
     Returns HTML content for invoice display/printing
+    Users can only see their own invoices, admins can see any invoice
     """
-    invoice = db.query(Invoice).filter(
-        Invoice.id == invoice_id,
-        Invoice.user_id == current_user.id
-    ).first()
+    invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
     
     if not invoice:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Invoice not found"
+        )
+    
+    # Verify ownership (unless admin)
+    admin_roles = ["super_admin", "mahasewa_admin", "mahasewa_staff"]
+    if current_user.role not in admin_roles and invoice.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. You can only view your own invoices."
         )
     
     html_content = InvoiceService.get_invoice_html(invoice)
@@ -172,16 +192,22 @@ async def get_invoice_pdf(
     Get invoice PDF (base64 encoded)
     
     Returns PDF content as base64 string
+    Users can only see their own invoices, admins can see any invoice
     """
-    invoice = db.query(Invoice).filter(
-        Invoice.id == invoice_id,
-        Invoice.user_id == current_user.id
-    ).first()
+    invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
     
     if not invoice:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Invoice not found"
+        )
+    
+    # Verify ownership (unless admin)
+    admin_roles = ["super_admin", "mahasewa_admin", "mahasewa_staff"]
+    if current_user.role not in admin_roles and invoice.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. You can only view your own invoices."
         )
     
     # Generate PDF (currently returns HTML, but named for future PDF implementation)
@@ -199,7 +225,7 @@ async def get_invoice_pdf(
 
 
 # Admin endpoints
-@router.get("/admin/all", dependencies=[Depends(require_role(["admin", "super_admin"]))])
+@router.get("/admin/all")
 async def list_all_invoices(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
@@ -207,12 +233,13 @@ async def list_all_invoices(
     user_id: Optional[int] = None,
     invoice_type: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_admin_user)
 ):
     """
     Admin: List all invoices
     
     Returns all invoices in the system with filtering
+    Requires admin role
     """
     query = db.query(Invoice)
     
@@ -269,18 +296,19 @@ async def list_all_invoices(
     }
 
 
-@router.post("/{invoice_id}/mark-paid", dependencies=[Depends(require_role(["admin", "super_admin"]))])
+@router.post("/{invoice_id}/mark-paid")
 async def mark_invoice_paid(
     invoice_id: int,
     payment_method: str,
     payment_reference: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_admin_user)
 ):
     """
     Admin: Mark invoice as paid
     
     Updates invoice status to PAID with payment details
+    Requires admin role
     """
     try:
         invoice = InvoiceService.mark_as_paid(
@@ -289,6 +317,21 @@ async def mark_invoice_paid(
             payment_method=payment_method,
             payment_reference=payment_reference
         )
+        
+        # Send payment confirmation email
+        try:
+            from app.services.email_service import email_service
+            user = db.query(User).filter(User.id == invoice.user_id).first()
+            if user:
+                email_service.send_payment_confirmation_email(
+                    user=user,
+                    invoice_number=invoice.invoice_number,
+                    amount=float(invoice.total_amount),
+                    payment_id=payment_reference or "manual"
+                )
+        except Exception as e:
+            # Log error but don't fail the request
+            print(f"Error sending payment confirmation email: {e}")
         
         return {
             "message": "Invoice marked as paid",
@@ -311,53 +354,51 @@ async def get_invoice_stats(
     db: Session = Depends(get_db)
 ):
     """
-    Get invoice statistics for current user
+    Get invoice statistics
     
     Returns summary of pending, paid, and overdue invoices
+    Regular users see their own stats, admins see all stats
     """
     from sqlalchemy import func
     from datetime import date
     
+    admin_roles = ["super_admin", "mahasewa_admin", "mahasewa_staff"]
+    is_admin = current_user.role in admin_roles
+    
+    # Build base query
+    if is_admin:
+        base_query = db.query(Invoice)
+    else:
+        base_query = db.query(Invoice).filter(Invoice.user_id == current_user.id)
+    
     # Total invoices
-    total = db.query(func.count(Invoice.id))\
-        .filter(Invoice.user_id == current_user.id)\
-        .scalar()
+    total = base_query.count()
     
     # Pending invoices
-    pending = db.query(func.count(Invoice.id))\
-        .filter(
-            Invoice.user_id == current_user.id,
-            Invoice.status == InvoiceStatus.PENDING
-        ).scalar()
+    pending = base_query.filter(Invoice.status == InvoiceStatus.PENDING).count()
     
     # Paid invoices
-    paid = db.query(func.count(Invoice.id))\
-        .filter(
-            Invoice.user_id == current_user.id,
-            Invoice.status == InvoiceStatus.PAID
-        ).scalar()
+    paid = base_query.filter(Invoice.status == InvoiceStatus.PAID).count()
     
     # Overdue invoices (pending and past due date)
-    overdue = db.query(func.count(Invoice.id))\
-        .filter(
-            Invoice.user_id == current_user.id,
-            Invoice.status == InvoiceStatus.PENDING,
-            Invoice.due_date < date.today()
-        ).scalar()
+    overdue = base_query.filter(
+        Invoice.status == InvoiceStatus.PENDING,
+        Invoice.due_date < date.today()
+    ).count()
     
     # Total amount pending
     pending_amount = db.query(func.sum(Invoice.total_amount))\
-        .filter(
-            Invoice.user_id == current_user.id,
-            Invoice.status == InvoiceStatus.PENDING
-        ).scalar() or 0
+        .filter(Invoice.status == InvoiceStatus.PENDING)
+    if not is_admin:
+        pending_amount = pending_amount.filter(Invoice.user_id == current_user.id)
+    pending_amount = pending_amount.scalar() or 0
     
     # Total amount paid
     paid_amount = db.query(func.sum(Invoice.total_amount))\
-        .filter(
-            Invoice.user_id == current_user.id,
-            Invoice.status == InvoiceStatus.PAID
-        ).scalar() or 0
+        .filter(Invoice.status == InvoiceStatus.PAID)
+    if not is_admin:
+        paid_amount = paid_amount.filter(Invoice.user_id == current_user.id)
+    paid_amount = paid_amount.scalar() or 0
     
     return {
         "total_invoices": total or 0,

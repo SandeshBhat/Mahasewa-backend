@@ -9,6 +9,7 @@ from app.db.session import get_db
 from app.models.content import BlogPost, Event, Download, FAQ, BlogStatus, PurchaseHistory, Gallery, EventType, EventStatus
 from app.models.user import User
 from app.dependencies.auth import get_current_user
+from app.api.v1.admin import get_current_admin_user
 
 router = APIRouter()
 
@@ -128,13 +129,10 @@ async def get_blog_post(
 @router.post("/blog-posts")
 async def create_blog_post(
     post_data: BlogPostCreate,
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: User = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     """Create a new blog post (admin only)"""
-    # TODO: Add admin role check when auth is fully implemented
-    # if not current_user or current_user.role not in ["admin", "super_admin", "mahasewa_admin"]:
-    #     raise HTTPException(status_code=403, detail="Admin access required")
     
     import uuid
     from datetime import datetime
@@ -177,11 +175,10 @@ async def create_blog_post(
 async def update_blog_post(
     post_id: int,
     post_data: BlogPostUpdate,
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: User = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     """Update a blog post (admin only)"""
-    # TODO: Add admin role check
     post = db.query(BlogPost).filter(BlogPost.id == post_id).first()
     
     if not post:
@@ -225,11 +222,10 @@ async def update_blog_post(
 @router.delete("/blog-posts/{post_id}")
 async def delete_blog_post(
     post_id: int,
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: User = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     """Delete a blog post (admin only)"""
-    # TODO: Add admin role check
     post = db.query(BlogPost).filter(BlogPost.id == post_id).first()
     
     if not post:
@@ -324,11 +320,10 @@ async def list_faqs(
 @router.post("/faqs")
 async def create_faq(
     faq_data: FAQCreate,
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: User = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     """Create a new FAQ (admin only)"""
-    # TODO: Add admin role check
     new_faq = FAQ(
         question=faq_data.question,
         answer=faq_data.answer,
@@ -355,11 +350,10 @@ async def create_faq(
 async def update_faq(
     faq_id: int,
     faq_data: FAQUpdate,
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: User = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     """Update an FAQ (admin only)"""
-    # TODO: Add admin role check
     faq = db.query(FAQ).filter(FAQ.id == faq_id).first()
     
     if not faq:
@@ -395,11 +389,10 @@ async def update_faq(
 @router.delete("/faqs/{faq_id}")
 async def delete_faq(
     faq_id: int,
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: User = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     """Delete an FAQ (admin only)"""
-    # TODO: Add admin role check
     faq = db.query(FAQ).filter(FAQ.id == faq_id).first()
     
     if not faq:
@@ -525,11 +518,10 @@ async def list_downloads(
 @router.post("/downloads")
 async def create_download(
     download_data: DownloadCreate,
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: User = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     """Create a new download (admin only)"""
-    # TODO: Add admin role check
     from decimal import Decimal
     
     published_date = None
@@ -582,11 +574,10 @@ async def create_download(
 async def update_download(
     download_id: int,
     download_data: DownloadUpdate,
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: User = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     """Update a download (admin only)"""
-    # TODO: Add admin role check
     download = db.query(Download).filter(Download.id == download_id).first()
     
     if not download:
@@ -721,11 +712,10 @@ async def track_download(
 @router.delete("/downloads/{download_id}")
 async def delete_download(
     download_id: int,
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: User = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     """Delete a download (admin only)"""
-    # TODO: Add admin role check
     download = db.query(Download).filter(Download.id == download_id).first()
     
     if not download:
@@ -992,11 +982,10 @@ async def list_gallery(
 @router.post("/gallery")
 async def create_gallery_item(
     gallery_data: GalleryCreate,
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: User = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     """Create a new gallery item (admin only)"""
-    # TODO: Add admin role check
     from datetime import datetime
     
     event_date = None
@@ -1077,11 +1066,10 @@ async def get_gallery_item(
 async def update_gallery_item(
     gallery_id: int,
     gallery_data: GalleryCreate,
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: User = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     """Update a gallery item (admin only)"""
-    # TODO: Add admin role check
     gallery = db.query(Gallery).filter(Gallery.id == gallery_id).first()
     
     if not gallery:
@@ -1138,11 +1126,10 @@ async def update_gallery_item(
 @router.delete("/gallery/{gallery_id}")
 async def delete_gallery_item(
     gallery_id: int,
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: User = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     """Delete a gallery item (admin only)"""
-    # TODO: Add admin role check
     gallery = db.query(Gallery).filter(Gallery.id == gallery_id).first()
     
     if not gallery:
@@ -1336,11 +1323,10 @@ async def get_event(
 @router.post("/events")
 async def create_event(
     event_data: EventCreate,
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: User = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     """Create a new event (admin only)"""
-    # TODO: Add admin role check
     
     # Generate slug from title
     import re
@@ -1403,11 +1389,10 @@ async def create_event(
 async def update_event(
     event_id: int,
     event_data: EventUpdate,
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: User = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     """Update an event (admin only)"""
-    # TODO: Add admin role check
     event = db.query(Event).filter(Event.id == event_id).first()
     
     if not event:
@@ -1478,11 +1463,10 @@ async def update_event(
 @router.delete("/events/{event_id}")
 async def delete_event(
     event_id: int,
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: User = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     """Delete an event (admin only)"""
-    # TODO: Add admin role check
     event = db.query(Event).filter(Event.id == event_id).first()
     
     if not event:

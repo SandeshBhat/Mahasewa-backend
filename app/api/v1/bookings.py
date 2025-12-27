@@ -10,7 +10,12 @@ from app.models.booking import ServiceBooking, BookingStatus
 from app.models.user import User
 from app.models.provider import ServiceProvider, Service
 from app.models.member import Member
-from app.dependencies.auth import get_current_user
+from app.dependencies.auth import (
+    get_current_user,
+    get_current_member_user,
+    get_current_admin_user,
+    require_any_role
+)
 import uuid
 
 router = APIRouter()
@@ -61,7 +66,7 @@ class BookingResponse(BaseModel):
 @router.post("/", response_model=dict)
 async def create_booking(
     booking_data: BookingCreateRequest,
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: User = Depends(require_any_role("mahasewa_member", "society_admin")),
     db: Session = Depends(get_db)
 ):
     """
@@ -72,12 +77,9 @@ async def create_booking(
     - Checks subscription-based area restrictions
     - Links to society if provided
     - Generates unique booking number
+    
+    Access: Members and Society Admins can create bookings
     """
-    if not current_user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required"
-        )
     
     # Verify provider exists
     provider = db.query(ServiceProvider).filter(ServiceProvider.id == booking_data.provider_id).first()
@@ -194,6 +196,19 @@ async def create_booking(
     db.commit()
     db.refresh(new_booking)
     
+    # Send booking confirmation email
+    try:
+        from app.services.email_service import email_service
+        email_service.send_booking_confirmation_email(
+            user=current_user,
+            booking_number=booking_number,
+            service_name=booking_data.service_name or (service.name if service else "Service"),
+            provider_name=provider.business_name
+        )
+    except Exception as e:
+        # Log error but don't fail the request
+        print(f"Error sending booking confirmation email: {e}")
+    
     return {
         "success": True,
         "message": "Booking created successfully",
@@ -218,25 +233,56 @@ async def list_bookings(
     member_id: Optional[int] = None,
     society_id: Optional[int] = None,
     db: Session = Depends(get_db),
-    current_user: Optional[User] = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
-    """List all bookings (admin) or filtered bookings"""
-    if not current_user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required"
-        )
-    
-    admin_roles = ["admin", "super_admin", "mahasewa_admin"]
-    if current_user.role not in admin_roles:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required"
-        )
+    """
+    List bookings with role-based filtering:
+    - Admins: See all bookings
+    - Members: See only their bookings
+    - Providers: See only their bookings
+    - Society Admins: See bookings for their society
+    """
+    admin_roles = ["super_admin", "mahasewa_admin", "mahasewa_staff"]
+    is_admin = current_user.role in admin_roles
     
     query = db.query(ServiceBooking)
     
-    # Apply filters
+    # Role-based filtering
+    if not is_admin:
+        if current_user.role == "mahasewa_member":
+            # Members see only their bookings
+            from app.models.member import Member
+            member = db.query(Member).filter(Member.user_id == current_user.id).first()
+            if member:
+                query = query.filter(ServiceBooking.client_user_id == current_user.id)
+            else:
+                # No member profile, return empty
+                return {"bookings": [], "total": 0, "skip": skip, "limit": limit}
+        
+        elif current_user.role == "service_provider":
+            # Providers see only their bookings
+            provider = db.query(ServiceProvider).filter(ServiceProvider.user_id == current_user.id).first()
+            if provider:
+                query = query.filter(ServiceBooking.provider_id == provider.id)
+            else:
+                return {"bookings": [], "total": 0, "skip": skip, "limit": limit}
+        
+        elif current_user.role == "society_admin":
+            # Society admins see bookings for their society
+            from app.models.society import Society
+            society = db.query(Society).filter(Society.admin_user_id == current_user.id).first()
+            if society:
+                query = query.filter(ServiceBooking.society_id == society.id)
+            else:
+                return {"bookings": [], "total": 0, "skip": skip, "limit": limit}
+        else:
+            # Other roles can't access
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied"
+            )
+    
+    # Apply filters (only if admin or if explicitly provided)
     if status:
         try:
             status_enum = BookingStatus[status.upper()]
@@ -244,13 +290,13 @@ async def list_bookings(
         except KeyError:
             pass
     
-    if provider_id:
+    if provider_id and is_admin:
         query = query.filter(ServiceBooking.provider_id == provider_id)
     
-    if member_id:
-        query = query.filter(ServiceBooking.member_id == member_id)
+    if member_id and is_admin:
+        query = query.filter(ServiceBooking.client_user_id == member_id)
     
-    if society_id:
+    if society_id and is_admin:
         query = query.filter(ServiceBooking.society_id == society_id)
     
     total = query.count()

@@ -27,8 +27,11 @@ from app.api.v1 import (
     analytics,
     publication_ads,
     uploads,
-    invoices
+    invoices,
+    payments,
+    geocoding
 )
+from app.api.v1 import files
 
 # Configure logging
 logging.basicConfig(
@@ -241,6 +244,24 @@ app.include_router(
     invoices.router,
     prefix=f"{settings.API_V1_PREFIX}/invoices",
     tags=["Invoices & Billing"]
+)
+
+app.include_router(
+    payments.router,
+    prefix=f"{settings.API_V1_PREFIX}/payments",
+    tags=["Payments"]
+)
+
+app.include_router(
+    geocoding.router,
+    prefix=f"{settings.API_V1_PREFIX}",
+    tags=["Geocoding & Location"]
+)
+
+app.include_router(
+    files.router,
+    prefix=f"{settings.API_V1_PREFIX}",
+    tags=["File Serving"]
 )
 
 

@@ -45,6 +45,9 @@ class Invoice(Base, TimestampMixin):
     customer_phone = Column(String(20), nullable=True)
     customer_address = Column(String(500), nullable=True)
     
+    # Branch tracking
+    branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True)
+    
     # Billing details
     billing_name = Column(String(255), nullable=True)
     billing_address = Column(String(500), nullable=True)
@@ -77,6 +80,7 @@ class Invoice(Base, TimestampMixin):
     
     # Relationships
     user = relationship("User", backref="invoices")
+    branch = relationship("Branch", backref="invoices")
     
     def __repr__(self):
         return f"<Invoice {self.invoice_number} - ₹{self.total_amount}>"

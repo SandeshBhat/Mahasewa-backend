@@ -12,6 +12,7 @@ from datetime import datetime
 from app.db.session import get_db
 from app.dependencies.auth import get_current_user
 from app.models.user import User
+from app.api.v1.admin import get_current_admin_user
 from app.services.s3_service import file_storage
 from app.config import settings
 from app.middleware.rate_limit import limiter
@@ -265,13 +266,12 @@ async def upload_multiple_files(
 async def delete_uploaded_file(
     file_path: str,
     subdirectory: str = 'uploads',
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: User = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     """
-    Delete an uploaded file
+    Delete an uploaded file (admin only)
     """
-    # TODO: Add admin role check
     
     success = file_storage.delete_file(file_path, subdirectory)
     
