@@ -26,7 +26,8 @@ from app.api.v1 import (
     lms,
     analytics,
     publication_ads,
-    uploads
+    uploads,
+    invoices
 )
 
 # Configure logging
@@ -234,6 +235,12 @@ app.include_router(
     uploads.router,
     prefix=f"{settings.API_V1_PREFIX}/uploads",
     tags=["File Uploads"]
+)
+
+app.include_router(
+    invoices.router,
+    prefix=f"{settings.API_V1_PREFIX}/invoices",
+    tags=["Invoices & Billing"]
 )
 
 

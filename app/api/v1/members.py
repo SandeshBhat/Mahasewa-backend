@@ -369,3 +369,169 @@ async def list_members(
         "skip": skip,
         "limit": limit
     }
+
+
+@router.get("/me/invoices")
+async def get_my_member_invoices(
+    skip: int = 0,
+    limit: int = 100,
+    current_user: Optional[User] = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get current member's invoices
+    
+    Returns list of invoices for the logged-in member
+    """
+    if not current_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required"
+        )
+    
+    # Verify member exists
+    member = db.query(Member).filter(Member.user_id == current_user.id).first()
+    if not member:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Member profile not found"
+        )
+    
+    # Get invoices using service
+    invoices = InvoiceService.get_user_invoices(
+        db, current_user.id, skip=skip, limit=limit
+    )
+    
+    from app.models.invoice import Invoice
+    total = db.query(Invoice).filter(Invoice.user_id == current_user.id).count()
+    
+    return {
+        "invoices": [
+            {
+                "id": inv.id,
+                "invoice_number": inv.invoice_number,
+                "invoice_type": inv.invoice_type.value,
+                "invoice_date": inv.invoice_date.isoformat(),
+                "due_date": inv.due_date.isoformat() if inv.due_date else None,
+                "total_amount": float(inv.total_amount),
+                "status": inv.status.value,
+                "payment_date": inv.payment_date.isoformat() if inv.payment_date else None,
+            }
+            for inv in invoices
+        ],
+        "total": total,
+        "skip": skip,
+        "limit": limit
+    }
+
+
+@router.get("/me/bookings")
+async def get_my_member_bookings(
+    skip: int = 0,
+    limit: int = 100,
+    status_filter: Optional[str] = None,
+    current_user: Optional[User] = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get current member's service bookings
+    
+    Returns list of bookings made by the logged-in member
+    """
+    if not current_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required"
+        )
+    
+    # Verify member exists
+    member = db.query(Member).filter(Member.user_id == current_user.id).first()
+    if not member:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Member profile not found"
+        )
+    
+    # Get bookings
+    from app.models.booking import Booking, BookingStatus
+    from sqlalchemy.orm import joinedload
+    
+    query = db.query(Booking).options(
+        joinedload(Booking.provider)
+    ).filter(Booking.user_id == current_user.id)
+    
+    # Filter by status if provided
+    if status_filter:
+        try:
+            status_enum = BookingStatus[status_filter.upper()]
+            query = query.filter(Booking.status == status_enum)
+        except KeyError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid status: {status_filter}"
+            )
+    
+    total = query.count()
+    bookings = query.order_by(Booking.created_at.desc()).offset(skip).limit(limit).all()
+    
+    return {
+        "bookings": [
+            {
+                "id": b.id,
+                "service_name": b.service_name,
+                "service_category": b.service_category,
+                "provider_id": b.provider_id,
+                "provider_name": b.provider.business_name if b.provider else None,
+                "scheduled_date": b.scheduled_date.isoformat() if b.scheduled_date else None,
+                "scheduled_time": b.scheduled_time,
+                "status": b.status.value,
+                "total_cost": float(b.total_cost) if b.total_cost else None,
+                "notes": b.notes,
+                "created_at": b.created_at.isoformat() if b.created_at else None,
+            }
+            for b in bookings
+        ],
+        "total": total,
+        "skip": skip,
+        "limit": limit
+    }
+
+
+@router.get("/me/documents")
+async def get_my_member_documents(
+    skip: int = 0,
+    limit: int = 100,
+    current_user: Optional[User] = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get current member's documents
+    
+    Returns list of documents uploaded by or issued to the member
+    (e.g., membership certificates, receipts, etc.)
+    """
+    if not current_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required"
+        )
+    
+    # Verify member exists
+    member = db.query(Member).filter(Member.user_id == current_user.id).first()
+    if not member:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Member profile not found"
+        )
+    
+    # TODO: Implement document management system
+    # For now, return placeholder structure
+    # In future, this would query a Documents table
+    
+    return {
+        "documents": [],
+        "total": 0,
+        "skip": skip,
+        "limit": limit,
+        "message": "Document management feature coming soon"
+    }

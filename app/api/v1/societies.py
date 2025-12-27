@@ -511,3 +511,65 @@ async def get_nearby_vendors(
             "longitude": float(society.longitude) if society.longitude else None,
         }
     }
+
+
+@router.get("/me/invoices")
+async def get_my_society_invoices(
+    skip: int = 0,
+    limit: int = 100,
+    current_user: Optional[User] = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get current society's invoices
+    
+    Returns list of invoices for the logged-in society admin
+    """
+    if not current_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required"
+        )
+    
+    # Find society by admin_user_id
+    society = db.query(Society).filter(Society.admin_user_id == current_user.id).first()
+    
+    if not society:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Society profile not found"
+        )
+    
+    # Get invoices using service
+    from app.services.invoice_service import InvoiceService
+    from app.models.invoice import Invoice
+    
+    invoices = InvoiceService.get_user_invoices(
+        db, current_user.id, skip=skip, limit=limit
+    )
+    
+    total = db.query(Invoice).filter(Invoice.user_id == current_user.id).count()
+    
+    return {
+        "invoices": [
+            {
+                "id": inv.id,
+                "invoice_number": inv.invoice_number,
+                "invoice_type": inv.invoice_type.value,
+                "invoice_date": inv.invoice_date.isoformat(),
+                "due_date": inv.due_date.isoformat() if inv.due_date else None,
+                "total_amount": float(inv.total_amount),
+                "status": inv.status.value,
+                "payment_date": inv.payment_date.isoformat() if inv.payment_date else None,
+            }
+            for inv in invoices
+        ],
+        "total": total,
+        "skip": skip,
+        "limit": limit,
+        "society": {
+            "id": society.id,
+            "name": society.name,
+            "registration_number": society.registration_number,
+        }
+    }
