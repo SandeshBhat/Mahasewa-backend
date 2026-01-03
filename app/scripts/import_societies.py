@@ -7,7 +7,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from sqlalchemy.orm import Session
-from app.core.database import SessionLocal
+from app.db.session import SessionLocal
 from app.models.society import Society
 
 
