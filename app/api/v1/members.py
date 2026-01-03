@@ -289,6 +289,12 @@ async def get_my_member_profile(
     # Get society if linked (already loaded via eager loading)
     society = member.society  # Already loaded, no additional query
     
+    # Get SocietyMember record to get designation/role
+    society_member = db.query(SocietyMember).filter(
+        SocietyMember.user_id == current_user.id,
+        SocietyMember.society_id == member.society_id if member.society_id else None
+    ).first() if member.society_id else None
+    
     return {
         "member": {
             "id": member.id,
@@ -302,6 +308,12 @@ async def get_my_member_profile(
             "renewal_date": member.renewal_date.isoformat() if member.renewal_date else None,
             "expiry_date": member.expiry_date.isoformat() if member.expiry_date else None,
             "created_at": member.created_at.isoformat() if member.created_at else None,
+            "address": member.address,
+            "city": member.city,
+            "state": member.state,
+            "pincode": member.pincode,
+            "designation": society_member.role if society_member else None,
+            "unit_number": society_member.unit_number if society_member else None,
             "user": {
                 "id": current_user.id,
                 "email": current_user.email,
@@ -314,6 +326,101 @@ async def get_my_member_profile(
                 "registration_number": society.registration_number,
                 "city": society.city,
             } if society else None
+        }
+    }
+
+
+@router.put("/me")
+async def update_my_member_profile(
+    profile_data: dict,
+    current_user: User = Depends(get_current_member_user),
+    db: Session = Depends(get_db)
+):
+    """Update current member's profile (address, city, state, pincode, society, designation)"""
+    
+    # Find member by user_id
+    member = db.query(Member).filter(Member.user_id == current_user.id).first()
+    if not member:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Member profile not found. Please complete your registration."
+        )
+    
+    # Update allowed member fields
+    allowed_member_fields = ["address", "city", "state", "pincode", "society_id"]
+    for field in allowed_member_fields:
+        if field in profile_data and profile_data[field] is not None:
+            setattr(member, field, profile_data[field])
+    
+    # Update society_id if provided
+    new_society_id = profile_data.get("society_id")
+    if new_society_id is not None:
+        # Validate society exists
+        society = db.query(Society).filter(Society.id == new_society_id).first()
+        if not society:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Society not found"
+            )
+        member.society_id = new_society_id
+    
+    # Update SocietyMember role (designation) if provided
+    designation = profile_data.get("designation")
+    if designation is not None and member.society_id:
+        society_member = db.query(SocietyMember).filter(
+            SocietyMember.user_id == current_user.id,
+            SocietyMember.society_id == member.society_id
+        ).first()
+        
+        if society_member:
+            society_member.role = designation
+        else:
+            # Create new SocietyMember record if it doesn't exist
+            society_member = SocietyMember(
+                user_id=current_user.id,
+                society_id=member.society_id,
+                role=designation,
+                join_date=member.join_date if member.join_date else datetime.now().date(),
+                is_active=True
+            )
+            db.add(society_member)
+    
+    # Update unit_number if provided
+    unit_number = profile_data.get("unit_number")
+    if unit_number is not None and member.society_id:
+        society_member = db.query(SocietyMember).filter(
+            SocietyMember.user_id == current_user.id,
+            SocietyMember.society_id == member.society_id
+        ).first()
+        
+        if society_member:
+            society_member.unit_number = unit_number
+        elif member.society_id:
+            # Create new SocietyMember record if it doesn't exist
+            society_member = SocietyMember(
+                user_id=current_user.id,
+                society_id=member.society_id,
+                role=designation or "member",
+                unit_number=unit_number,
+                join_date=member.join_date if member.join_date else datetime.now().date(),
+                is_active=True
+            )
+            db.add(society_member)
+    
+    db.commit()
+    db.refresh(member)
+    
+    return {
+        "success": True,
+        "message": "Profile updated successfully",
+        "member": {
+            "id": member.id,
+            "membership_number": member.membership_number,
+            "address": member.address,
+            "city": member.city,
+            "state": member.state,
+            "pincode": member.pincode,
+            "society_id": member.society_id,
         }
     }
 

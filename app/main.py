@@ -90,28 +90,46 @@ app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 # CRITICAL: When allow_credentials=True, must use allow_origin_regex OR specific origins
 # FastAPI CORS middleware with credentials requires either:
 # 1. Specific origins in allow_origins list, OR
-# 2. allow_origin_regex pattern (but this might not work with credentials in some versions)
-# Solution: List all known Vercel URLs explicitly
-cors_origins = settings.CORS_ORIGINS if settings.CORS_ORIGINS else [
-    # Primary domains
-    "https://mahasewa.vercel.app",
-    "https://mahasewa-frontend.vercel.app",
-    "https://mahasewa.org",
-    "https://www.mahasewa.org",
-    # All Vercel deployment URLs (add new ones as they're created)
-    "https://mahasewa-frontend-m0fq7lec7-hyperneural.vercel.app",  # Latest - Dec 26, 2025
-    "https://mahasewa-frontend-lo2sqngn8-hyperneural.vercel.app",
-    "https://mahasewa-frontend-eiyqt275t-hyperneural.vercel.app",
-    "https://mahasewa-frontend-qorb18fjy-hyperneural.vercel.app",
-    # Local development
-    "http://localhost:3000",
-    "http://localhost:8080",
-]
+# 2. allow_origin_regex pattern (works with credentials in FastAPI 0.100+)
+# Solution: Use regex for all *.vercel.app domains + specific origins
+import json
 
-logger.info(f"CORS configured for origins: {cors_origins}")
+# Parse CORS_ORIGINS from environment (could be JSON string or list)
+cors_origins_raw = settings.CORS_ORIGINS
+if isinstance(cors_origins_raw, str):
+    try:
+        cors_origins_raw = json.loads(cors_origins_raw)
+    except json.JSONDecodeError:
+        # If not JSON, treat as comma-separated string
+        cors_origins_raw = [origin.strip() for origin in cors_origins_raw.split(",")]
+
+# Separate specific origins from wildcards
+specific_origins = []
+for origin in cors_origins_raw:
+    if "*" not in origin:
+        specific_origins.append(origin)
+
+# Default origins if none provided
+if not specific_origins:
+    specific_origins = [
+        "https://mahasewa.vercel.app",
+        "https://mahasewa-frontend.vercel.app",
+        "https://mahasewa.org",
+        "https://www.mahasewa.org",
+        "http://localhost:3000",
+        "http://localhost:8080",
+    ]
+
+# Regex pattern for all Vercel deployment URLs (supports any subdomain.vercel.app)
+vercel_regex = r"https://.*\.vercel\.app"
+
+logger.info(f"CORS configured for specific origins: {specific_origins}")
+logger.info(f"CORS regex pattern for Vercel: {vercel_regex}")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=cors_origins,  # Specific origins (required for credentials)
+    allow_origins=specific_origins,  # Specific origins
+    allow_origin_regex=vercel_regex,  # Regex for all *.vercel.app domains
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
