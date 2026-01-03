@@ -68,6 +68,18 @@ async def subscribe_vendor(
     if not plan or not plan.is_active:
         raise HTTPException(status_code=404, detail="Plan not found or inactive")
     
+    # Check for existing pending subscription
+    existing_pending = db.query(VendorSubscription).filter(
+        VendorSubscription.service_provider_id == provider_id,
+        VendorSubscription.status == SubscriptionStatus.PENDING_PAYMENT
+    ).first()
+    
+    if existing_pending:
+        raise HTTPException(
+            status_code=400,
+            detail=f"You already have a pending subscription (ID: {existing_pending.id}). Please complete payment or contact support to cancel it before creating a new subscription."
+        )
+    
     # Calculate dates
     start_date = date.today()
     end_date = start_date + timedelta(days=plan.duration_months * 30)
