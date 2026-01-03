@@ -7,12 +7,13 @@ import json
 
 from app.db.session import get_db
 from app.models.user import User
-from app.models.invoice import Invoice, InvoiceStatus
+from app.models.invoice import Invoice, InvoiceStatus, InvoiceType
 from app.models.content import PurchaseHistory
 from app.dependencies.auth import get_current_user
 from app.api.v1.admin import get_current_admin_user
 from app.services.payment_service import payment_service
 from app.services.invoice_service import InvoiceService
+from datetime import date
 from app.schemas.payment import (
     CreatePaymentOrderRequest,
     CreatePaymentOrderResponse,
@@ -162,6 +163,22 @@ async def verify_payment(
                 except Exception as e:
                     # Log error but don't fail the request
                     print(f"Error sending payment confirmation email: {e}")
+                
+                # Auto-activate subscription if invoice is for subscription
+                if invoice.invoice_type == InvoiceType.SUBSCRIPTION and invoice.related_type == "subscription" and invoice.related_id:
+                    from app.models.subscription import VendorSubscription, SubscriptionStatus
+                    subscription = db.query(VendorSubscription).filter(
+                        VendorSubscription.id == invoice.related_id
+                    ).first()
+                    if subscription and subscription.status == SubscriptionStatus.PENDING_PAYMENT:
+                        subscription.status = SubscriptionStatus.ACTIVE
+                        subscription.payment_date = date.today()
+                        subscription.paid_amount = invoice.total_amount
+                        # Activate provider
+                        provider = subscription.service_provider
+                        provider.is_active = True
+                        db.commit()
+                        db.refresh(subscription)
         
         # Update purchase if purchase_id provided
         purchase = None
@@ -257,6 +274,21 @@ async def payment_webhook(
                         razorpay_payment_id=payment_id
                     )
                     db.commit()
+                    
+                    # Auto-activate subscription if invoice is for subscription
+                    if invoice.invoice_type == InvoiceType.SUBSCRIPTION and invoice.related_type == "subscription" and invoice.related_id:
+                        from app.models.subscription import VendorSubscription, SubscriptionStatus
+                        subscription = db.query(VendorSubscription).filter(
+                            VendorSubscription.id == invoice.related_id
+                        ).first()
+                        if subscription and subscription.status == SubscriptionStatus.PENDING_PAYMENT:
+                            subscription.status = SubscriptionStatus.ACTIVE
+                            subscription.payment_date = date.today()
+                            subscription.paid_amount = invoice.total_amount
+                            # Activate provider
+                            provider = subscription.service_provider
+                            provider.is_active = True
+                            db.commit()
             
             # Update purchase
             if purchase_id:
