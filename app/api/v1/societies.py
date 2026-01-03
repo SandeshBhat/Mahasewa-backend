@@ -367,6 +367,7 @@ async def get_society(society_id: int, db: Session = Depends(get_db)):
         "treasurer_name": treasurer.user.full_name if treasurer and treasurer.user else None,
         "created_at": society.created_at.isoformat() if society.created_at else None,
         "updated_at": society.updated_at.isoformat() if society.updated_at else None,
+        "documents": society.documents if society.documents else None,  # Include CSV data (membership_no, gst_no, mobile, landline, etc.)
     }
 
 
