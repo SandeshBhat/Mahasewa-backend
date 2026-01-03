@@ -309,6 +309,9 @@ async def get_my_society_bookings(
 @router.get("/{society_id}")
 async def get_society(society_id: int, db: Session = Depends(get_db)):
     """Get society details"""
+    from app.models.member import Member
+    from app.models.society import SocietyMember
+    
     society = db.query(Society).filter(Society.id == society_id).first()
     
     if not society:
@@ -317,9 +320,31 @@ async def get_society(society_id: int, db: Session = Depends(get_db)):
             detail="Society not found"
         )
     
+    # Calculate actual member count from database
+    actual_member_count = db.query(Member).filter(Member.society_id == society_id).count()
+    actual_society_member_count = db.query(SocietyMember).filter(SocietyMember.society_id == society_id).count()
+    total_actual_members = actual_member_count + actual_society_member_count
+    
+    # Get office bearers from SocietyMember records
+    chairman = db.query(SocietyMember).filter(
+        SocietyMember.society_id == society_id,
+        SocietyMember.role.ilike('%chairman%')
+    ).first()
+    
+    secretary = db.query(SocietyMember).filter(
+        SocietyMember.society_id == society_id,
+        SocietyMember.role.ilike('%secretary%')
+    ).first()
+    
+    treasurer = db.query(SocietyMember).filter(
+        SocietyMember.society_id == society_id,
+        SocietyMember.role.ilike('%treasurer%')
+    ).first()
+    
     return {
         "id": society.id,
         "name": society.name,
+        "society_name": society.name,  # Alias for compatibility
         "registration_number": society.registration_number,
         "address": society.address,
         "city": society.city,
@@ -327,11 +352,21 @@ async def get_society(society_id: int, db: Session = Depends(get_db)):
         "pincode": society.pincode,
         "phone": society.phone,
         "email": society.email,
-        "total_members": society.total_members,
+        "total_units": society.total_units,
+        "total_members": total_actual_members if total_actual_members > 0 else (society.total_members or 0),
+        "total_flats": society.total_units,  # Alias
+        "year_established": society.year_established,
+        "registration_date": society.registration_date.isoformat() if society.registration_date else None,
         "is_verified": society.is_verified,
         "is_active": society.is_active,
+        "status": "active" if society.is_active else "inactive",
         "latitude": float(society.latitude) if society.latitude else None,
         "longitude": float(society.longitude) if society.longitude else None,
+        "president_name": chairman.user.full_name if chairman and chairman.user else None,
+        "secretary_name": secretary.user.full_name if secretary and secretary.user else None,
+        "treasurer_name": treasurer.user.full_name if treasurer and treasurer.user else None,
+        "created_at": society.created_at.isoformat() if society.created_at else None,
+        "updated_at": society.updated_at.isoformat() if society.updated_at else None,
     }
 
 
