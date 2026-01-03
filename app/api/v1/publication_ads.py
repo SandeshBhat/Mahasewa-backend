@@ -298,3 +298,211 @@ async def reject_publication_ad(
         }
     except ImportError:
         raise HTTPException(status_code=501, detail="Publication ads table not yet created")
+
+
+@router.post("/publication-ads/{ad_id}/create-payment", response_model=dict)
+async def create_publication_ad_payment(
+    ad_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Create payment order for a publication ad"""
+    from app.models.invoice import Invoice, InvoiceType, InvoiceStatus
+    from app.services.invoice_service import InvoiceService
+    from app.services.payment_service import payment_service
+    from decimal import Decimal
+    
+    try:
+        from app.models.publication_ad import PublicationAd
+    except ImportError:
+        raise HTTPException(status_code=501, detail="Publication ads table not yet created")
+    
+    ad = db.query(PublicationAd).filter(PublicationAd.id == ad_id).first()
+    if not ad:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Publication ad not found"
+        )
+    
+    # Verify ad belongs to user's vendor profile
+    provider = db.query(ServiceProvider).filter(ServiceProvider.user_id == current_user.id).first()
+    if not provider or ad.vendor_id != provider.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. This ad does not belong to you."
+        )
+    
+    # Check if ad is approved
+    if ad.status != "approved":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Ad must be approved before payment. Current status: {ad.status}"
+        )
+    
+    # Check if already paid
+    if ad.payment_status == "paid":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This ad has already been paid"
+        )
+    
+    # Create invoice if not exists
+    invoice = None
+    if ad.invoice_id:
+        invoice = db.query(Invoice).filter(Invoice.id == ad.invoice_id).first()
+    
+    if not invoice:
+        invoice = InvoiceService.create_publication_ad_invoice(
+            db=db,
+            user=current_user,
+            ad_id=ad_id,
+            amount=float(ad.total_price),
+            description=f"Publication Ad - {ad.publication_issue} ({ad.page_size}, {ad.page_color})"
+        )
+        ad.invoice_id = invoice.id
+        db.commit()
+        db.refresh(ad)
+    
+    # Create Razorpay order
+    if not payment_service.is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Payment gateway is not configured. Please contact administrator."
+        )
+    
+    try:
+        order = payment_service.create_order(
+            amount=Decimal(str(ad.total_price)),
+            currency="INR",
+            receipt=f"AD-{ad.id}",
+            notes={
+                "ad_id": str(ad_id),
+                "publication_issue": ad.publication_issue,
+                "user_id": str(current_user.id),
+            },
+            invoice_id=invoice.id
+        )
+        
+        return {
+            "success": True,
+            "order_id": order.get("id"),
+            "key_id": payment_service.get_key_id(),
+            "amount": float(ad.total_price),
+            "currency": "INR",
+            "invoice_id": invoice.id,
+            "ad_id": ad_id,
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create payment order: {str(e)}"
+        )
+
+
+@router.post("/publication-ads/{ad_id}/verify-payment", response_model=dict)
+async def verify_publication_ad_payment(
+    ad_id: int,
+    razorpay_order_id: str,
+    razorpay_payment_id: str,
+    razorpay_signature: str,
+    invoice_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Verify publication ad payment after Razorpay payment"""
+    from app.models.invoice import Invoice, InvoiceStatus
+    from app.services.payment_service import payment_service
+    
+    try:
+        from app.models.publication_ad import PublicationAd
+    except ImportError:
+        raise HTTPException(status_code=501, detail="Publication ads table not yet created")
+    
+    ad = db.query(PublicationAd).filter(PublicationAd.id == ad_id).first()
+    if not ad:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Publication ad not found"
+        )
+    
+    # Verify ad belongs to user's vendor profile
+    provider = db.query(ServiceProvider).filter(ServiceProvider.user_id == current_user.id).first()
+    if not provider or ad.vendor_id != provider.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied"
+        )
+    
+    # Verify payment signature
+    if not payment_service.is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Payment gateway is not configured"
+        )
+    
+    try:
+        is_valid = payment_service.verify_payment_signature(
+            razorpay_order_id=razorpay_order_id,
+            razorpay_payment_id=razorpay_payment_id,
+            razorpay_signature=razorpay_signature
+        )
+        
+        if not is_valid:
+            raise HTTPException(status_code=400, detail="Invalid payment signature")
+        
+        # Get payment details from Razorpay
+        payment_details = payment_service.get_payment_details(razorpay_payment_id)
+        
+        # Check payment status
+        if payment_details.get("status") != "captured":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Payment not captured. Status: {payment_details.get('status')}"
+            )
+        
+        # Update invoice
+        invoice = db.query(Invoice).filter(
+            Invoice.id == invoice_id,
+            Invoice.user_id == current_user.id
+        ).first()
+        
+        if invoice:
+            payment_service.update_invoice_after_payment(
+                invoice=invoice,
+                razorpay_order_id=razorpay_order_id,
+                razorpay_payment_id=razorpay_payment_id
+            )
+            db.commit()
+            db.refresh(invoice)
+            
+            # Update ad payment status
+            if invoice.status == InvoiceStatus.PAID:
+                ad.payment_status = "paid"
+                db.commit()
+            
+            # Send payment confirmation email
+            try:
+                from app.services.email_service import email_service
+                email_service.send_payment_confirmation_email(
+                    user=current_user,
+                    invoice_number=invoice.invoice_number,
+                    amount=float(invoice.total_amount),
+                    payment_id=razorpay_payment_id
+                )
+            except Exception as e:
+                print(f"Error sending payment confirmation email: {e}")
+        
+        return {
+            "success": True,
+            "payment_id": razorpay_payment_id,
+            "order_id": razorpay_order_id,
+            "amount": float(payment_details.get("amount", 0)) / 100,
+            "invoice_id": invoice.id if invoice else None,
+            "ad_id": ad_id,
+            "message": "Payment verified and ad updated successfully"
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Payment verification failed: {str(e)}")
