@@ -113,6 +113,89 @@ class InvoiceService:
         return invoice
     
     @staticmethod
+    def create_service_booking_invoice(
+        db: Session,
+        user: User,
+        booking_id: int,
+        amount: float,
+        description: str = "Service Booking Payment",
+        payment_type: str = "full",  # "full" or "advance"
+        gst_rate: Decimal = Decimal("18.00")
+    ) -> Invoice:
+        """Create an invoice for service booking payment"""
+        from app.models.booking import ServiceBooking
+        
+        booking = db.query(ServiceBooking).filter(ServiceBooking.id == booking_id).first()
+        if not booking:
+            raise ValueError(f"Booking {booking_id} not found")
+        
+        base_amount = Decimal(str(amount))
+        gst_amount = (base_amount * gst_rate) / Decimal("100")
+        total_amount = base_amount + gst_amount
+        
+        # Generate invoice number
+        invoice_number = InvoiceService.generate_invoice_number(db)
+        
+        # Create line items
+        line_items = [
+            {
+                "description": description,
+                "quantity": 1,
+                "rate": float(base_amount),
+                "amount": float(base_amount)
+            },
+            {
+                "description": f"GST ({gst_rate}%)",
+                "quantity": 1,
+                "rate": float(gst_amount),
+                "amount": float(gst_amount)
+            }
+        ]
+        
+        # Get user address if available
+        billing_address = None
+        if hasattr(user, 'member_profile') and user.member_profile:
+            member = user.member_profile
+            if member.address:
+                address_parts = [member.address]
+                if member.city:
+                    address_parts.append(member.city)
+                if member.state:
+                    address_parts.append(member.state)
+                if member.pincode:
+                    address_parts.append(member.pincode)
+                billing_address = ", ".join(address_parts)
+        
+        # Create invoice
+        invoice = Invoice(
+            invoice_number=invoice_number,
+            invoice_type=InvoiceType.SERVICE_BOOKING,
+            invoice_date=date.today(),
+            due_date=date.today() + timedelta(days=7),
+            user_id=user.id,
+            customer_name=user.full_name,
+            customer_email=user.email,
+            customer_phone=user.phone,
+            billing_name=user.full_name,
+            billing_address=billing_address,
+            base_amount=base_amount,
+            gst_rate=gst_rate,
+            gst_amount=gst_amount,
+            total_amount=total_amount,
+            line_items=line_items,
+            status=InvoiceStatus.PENDING,
+            related_type="booking",
+            related_id=booking_id,
+            notes=f"Payment for booking {booking.booking_number}. Payment type: {payment_type}."
+        )
+        
+        db.add(invoice)
+        db.commit()
+        db.refresh(invoice)
+        
+        return invoice
+    
+    @staticmethod
     def generate_pdf(invoice: Invoice) -> bytes:
         """Generate PDF for invoice using WeasyPrint"""
         

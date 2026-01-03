@@ -603,6 +603,227 @@ async def update_booking(
     }
 
 
+@router.post("/{booking_id}/create-payment", response_model=dict)
+async def create_booking_payment(
+    booking_id: int,
+    payment_type: str = "full",  # "full" or "advance"
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Create payment order for a booking
+    
+    Payment types:
+    - "full": Pay full quote/final amount
+    - "advance": Pay advance amount (typically 10-30% of quote)
+    """
+    from app.models.invoice import Invoice, InvoiceType, InvoiceStatus
+    from app.services.invoice_service import InvoiceService
+    from decimal import Decimal
+    
+    booking = db.query(ServiceBooking).filter(ServiceBooking.id == booking_id).first()
+    if not booking:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Booking not found"
+        )
+    
+    # Verify booking belongs to user
+    if booking.client_user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. This booking does not belong to you."
+        )
+    
+    # Check if booking has a quote
+    if not booking.quote_amount and not booking.final_amount:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No quote available for this booking. Please wait for the provider to provide a quote."
+        )
+    
+    # Determine payment amount
+    amount_to_pay = None
+    if payment_type == "full":
+        amount_to_pay = booking.final_amount or booking.quote_amount
+    elif payment_type == "advance":
+        # Advance is typically 20% of quote
+        quote = booking.final_amount or booking.quote_amount
+        amount_to_pay = Decimal(str(quote)) * Decimal("0.20")
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid payment_type. Must be 'full' or 'advance'"
+        )
+    
+    if not amount_to_pay or amount_to_pay <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid payment amount"
+        )
+    
+    # Create invoice for booking
+    try:
+        invoice = InvoiceService.create_service_booking_invoice(
+            db=db,
+            user=current_user,
+            booking_id=booking_id,
+            amount=float(amount_to_pay),
+            description=f"Service Booking Payment - {booking.service_name}",
+            payment_type=payment_type
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create invoice: {str(e)}"
+        )
+    
+    # Create Razorpay order
+    try:
+        from app.services.payment_service import payment_service
+        
+        if not payment_service.is_configured():
+            raise HTTPException(
+                status_code=503,
+                detail="Payment gateway is not configured. Please contact administrator."
+            )
+        
+        order = payment_service.create_order(
+            amount=amount_to_pay,
+            currency="INR",
+            receipt=f"BK-{booking.booking_number}",
+            notes={
+                "booking_id": str(booking_id),
+                "booking_number": booking.booking_number,
+                "service_name": booking.service_name,
+                "payment_type": payment_type,
+                "user_id": str(current_user.id),
+            },
+            invoice_id=invoice.id
+        )
+        
+        return {
+            "success": True,
+            "order_id": order.get("id"),
+            "key_id": payment_service.get_key_id(),
+            "amount": float(amount_to_pay),
+            "currency": "INR",
+            "invoice_id": invoice.id,
+            "booking_id": booking_id,
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create payment order: {str(e)}"
+        )
+
+
+@router.post("/{booking_id}/verify-payment", response_model=dict)
+async def verify_booking_payment(
+    booking_id: int,
+    razorpay_order_id: str,
+    razorpay_payment_id: str,
+    razorpay_signature: str,
+    invoice_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Verify booking payment after Razorpay payment"""
+    from app.models.invoice import Invoice, InvoiceStatus
+    from app.services.payment_service import payment_service
+    from app.schemas.payment import VerifyPaymentRequest
+    
+    booking = db.query(ServiceBooking).filter(ServiceBooking.id == booking_id).first()
+    if not booking:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Booking not found"
+        )
+    
+    # Verify booking belongs to user
+    if booking.client_user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied"
+        )
+    
+    # Verify payment signature
+    if not payment_service.is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Payment gateway is not configured"
+        )
+    
+    try:
+        is_valid = payment_service.verify_payment_signature(
+            razorpay_order_id=razorpay_order_id,
+            razorpay_payment_id=razorpay_payment_id,
+            razorpay_signature=razorpay_signature
+        )
+        
+        if not is_valid:
+            raise HTTPException(status_code=400, detail="Invalid payment signature")
+        
+        # Get payment details from Razorpay
+        payment_details = payment_service.get_payment_details(razorpay_payment_id)
+        
+        # Check payment status
+        if payment_details.get("status") != "captured":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Payment not captured. Status: {payment_details.get('status')}"
+            )
+        
+        # Update invoice
+        invoice = db.query(Invoice).filter(
+            Invoice.id == invoice_id,
+            Invoice.user_id == current_user.id
+        ).first()
+        
+        if invoice:
+            payment_service.update_invoice_after_payment(
+                invoice=invoice,
+                razorpay_order_id=razorpay_order_id,
+                razorpay_payment_id=razorpay_payment_id
+            )
+            db.commit()
+            db.refresh(invoice)
+            
+            # Update booking payment status
+            if invoice.status == InvoiceStatus.PAID:
+                booking.payment_status = "paid"
+                if invoice.total_amount:
+                    booking.advance_paid = float(invoice.total_amount)
+                db.commit()
+            
+            # Send payment confirmation email
+            try:
+                from app.services.email_service import email_service
+                email_service.send_payment_confirmation_email(
+                    user=current_user,
+                    invoice_number=invoice.invoice_number,
+                    amount=float(invoice.total_amount),
+                    payment_id=razorpay_payment_id
+                )
+            except Exception as e:
+                print(f"Error sending payment confirmation email: {e}")
+        
+        return {
+            "success": True,
+            "payment_id": razorpay_payment_id,
+            "order_id": razorpay_order_id,
+            "amount": float(payment_details.get("amount", 0)) / 100,
+            "invoice_id": invoice.id if invoice else None,
+            "booking_id": booking_id,
+            "message": "Payment verified and booking updated successfully"
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Payment verification failed: {str(e)}")
+
+
 @router.get("/stats/summary", response_model=dict)
 async def get_booking_stats(
     db: Session = Depends(get_db),
