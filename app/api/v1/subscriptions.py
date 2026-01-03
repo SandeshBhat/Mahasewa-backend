@@ -140,7 +140,8 @@ async def get_vendor_subscriptions(
                 "is_active": s.is_active,
                 "days_remaining": s.days_remaining,
                 "paid_amount": float(s.paid_amount) if s.paid_amount else None,
-                "auto_renew": s.auto_renew
+                "auto_renew": s.auto_renew,
+                "invoice_id": s.invoice_id
             }
             for s in subscriptions
         ]
